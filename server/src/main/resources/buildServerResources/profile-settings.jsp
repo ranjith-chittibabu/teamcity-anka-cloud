@@ -255,6 +255,16 @@
     </td>
 </tr>
 
+<c:set var="paramSkipSsh" value="<%=AnkaConstants.SKIP_SSH%>"/>
+<tr>
+    <th><label for="${paramSkipSsh}">Skip SSH connection (property setup).</label></th>
+    <td>
+        <div>
+            <props:checkboxProperty name="${paramSkipSsh}" />
+        </div>
+        <span class="error option-error option-error_${paramSkipSsh}" id="error_${paramSkipSsh}" uncheckedValue="false" ></span>
+    </td>
+</tr>
 
 <c:set var="paramAgentPath" value="<%=AnkaConstants.AGENT_PATH%>"/>
 <tr class="dependentOnControllerConnection hidden">
