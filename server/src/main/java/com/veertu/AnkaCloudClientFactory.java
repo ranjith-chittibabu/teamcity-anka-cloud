@@ -80,6 +80,7 @@ public class AnkaCloudClientFactory implements CloudClientFactory {
         if (serverUrl == null || serverUrl.isEmpty()) {
             serverUrl = serverSettings.getRootUrl();
         }
+
         String groupId = cloudClientParameters.getParameter(AnkaConstants.GROUP_ID);
         String vmNameTemplate = cloudClientParameters.getParameter(AnkaConstants.VM_NAME_TEMPLATE);
         if (groupId != null && groupId.isEmpty()) {
@@ -133,6 +134,12 @@ public class AnkaCloudClientFactory implements CloudClientFactory {
 
         String profileId = cloudClientParameters.getParameter("system.cloud.profile_id");
 
+        String skipSshString = cloudClientParameters.getParameter(AnkaConstants.SKIP_SSH);
+        boolean skipSshConnection = false;
+        if (skipSshString != null && skipSshString.equals("true")) {
+            skipSshConnection = true;
+        }
+
         AnkaCloudConnector connector;
 
         String authMethod = cloudClientParameters.getParameter(AnkaConstants.AUTH_METHOD);
@@ -154,7 +161,8 @@ public class AnkaCloudClientFactory implements CloudClientFactory {
                     key, 
                     AuthType.CERTIFICATE, 
                     rootCA,
-                    serverUrl
+                    serverUrl,
+                    skipSshConnection
                 );
             } else {
                 connector = new AnkaCloudConnector(
@@ -167,7 +175,8 @@ public class AnkaCloudClientFactory implements CloudClientFactory {
                     profileId, 
                     priority, 
                     rootCA,
-                    serverUrl
+                    serverUrl,
+                    skipSshConnection
                 );
             }
 
@@ -197,7 +206,8 @@ public class AnkaCloudClientFactory implements CloudClientFactory {
                 profileId, 
                 priority, 
                 rootCA,
-                serverUrl
+                serverUrl,
+                skipSshConnection
             );
         }
 

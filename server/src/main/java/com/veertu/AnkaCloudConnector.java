@@ -38,6 +38,7 @@ public class AnkaCloudConnector {
     private int sshForwardingPort;
     private final int priority;
     private final AnkaAPI ankaAPI;
+    private Boolean skipSshConnection;
     private final int waitUnit = 4000;
     private final int maxRunningTimeout = waitUnit * 30;
     private final int maxSchedulingTimeout = 1000 * 60 * 60; // 1 hour
@@ -86,7 +87,8 @@ public class AnkaCloudConnector {
         String profileId, 
         int priority, 
         String rootCA,
-        String serverUrl
+        String serverUrl,
+        Boolean skipSshConnection
     ) {
         this.mgmtURL = mgmtURL;
         this.sshUser = sshUser;
@@ -97,6 +99,7 @@ public class AnkaCloudConnector {
         this.agentPoolId = agentPoolId;
         this.profileId = profileId;
         this.priority = priority;
+        this.skipSshConnection = skipSshConnection;
         this.ankaAPI = new AnkaAPI(mgmtURL,false, rootCA);
     }
 
@@ -114,7 +117,8 @@ public class AnkaCloudConnector {
         String key, 
         AuthType authType,
         String rootCA,
-        String serverUrl
+        String serverUrl,
+        Boolean skipSshConnection
     ) {
         this.mgmtURL = mgmtURL;
         this.sshUser = sshUser;
@@ -125,6 +129,7 @@ public class AnkaCloudConnector {
         this.agentPoolId = agentPoolId;
         this.profileId = profileId;
         this.priority = priority;
+        this.skipSshConnection = skipSshConnection;
         this.ankaAPI = new AnkaAPI(mgmtURL, skipTLSVerification, cert, key, authType, rootCA);
     }
 
@@ -134,10 +139,13 @@ public class AnkaCloudConnector {
         } else {
             LOG.info(String.format("starting new instance with template %s, tag %s, group %s, externalId %s", ankaCloudImage.getTemplateId(), ankaCloudImage.getTemplateTag(), ankaCloudImage.getGroupId(), ankaCloudImage.getExternalId()));
         }
+
+        String agentStartupScript = prepareAgentStartupScript(ankaCloudImage, userData);
+
         String vmId = this.ankaAPI.startVM(
             ankaCloudImage.getTemplateId(), 
             ankaCloudImage.getTemplateTag(), 
-            null, 
+            agentStartupScript, 
             ankaCloudImage.getGroupId(),
             priority, 
             null,
@@ -146,8 +154,44 @@ public class AnkaCloudConnector {
             ankaCloudImage.getVCpuCount(),
             ankaCloudImage.getRamSize()
         );
-        updater.executeTaskInBackground(() -> this.waitForBootAndSetVmProperties(vmId, ankaCloudImage, userData));
+        if (!skipSshConnection) {
+            updater.executeTaskInBackground(() -> this.waitForBootAndSetVmProperties(vmId, ankaCloudImage, userData));
+        }
         return new AnkaCloudInstance(vmId, ankaCloudImage);
+    }
+
+    private String prepareAgentStartupScript(AnkaCloudImage image, CloudInstanceUserData userData) {
+        if (!skipSshConnection) {
+            LOG.info("skipSshConnection=false; skipping startup script generation.");
+            return null;
+        }
+        try {
+            HashMap<String,String> properties = new HashMap<>();
+            properties.put(AnkaConstants.ENV_TEMPLATE_ID_KEY, image.getTemplateId());
+            properties.put(AnkaConstants.ENV_PROFILE_ID, profileId);
+            properties.put(AnkaConstants.ENV_ANKA_CLOUD_KEY, AnkaConstants.ENV_ANKA_CLOUD_VALUE);
+            
+            if (this.serverUrl != null && !this.serverUrl.isEmpty()) {
+                properties.put(AnkaConstants.ENV_SERVER_URL_KEY, this.serverUrl);
+            }
+            // TeamCity auto‑authorization parameter
+            String startingId = userData.getCustomAgentConfigurationParameters()
+                                        .get("teamcity.agent.startingInstanceId");
+            if (startingId != null) {
+                properties.put("teamcity.agent.startingInstanceId", startingId);
+            }
+            AnkaStartupScriptBuilder scriptBuilder = new AnkaStartupScriptBuilder(
+                agentPath,
+                this.serverUrl,
+                this.mgmtURL
+            );
+            String script = scriptBuilder.buildStartupScript(properties);
+            return script;
+        } catch (RuntimeException e) {
+            String msg = "Failed to build startup script: " + e.getMessage();
+            LOG.warn(msg, e);
+            throw new AnkaStartupScriptException(msg, e);
+        }
     }
 
     private void waitForBootAndSetVmProperties(String vmId, AnkaCloudImage ankaCloudImage, CloudInstanceUserData userData) {

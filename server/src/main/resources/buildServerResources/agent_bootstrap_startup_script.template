@@ -1,0 +1,60 @@
+#!/bin/bash
+set -euo pipefail
+
+CONTROLLER_URL="${CONTROLLER_URL}"
+PROP_FILE="${PROP_FILE}"
+LOAD_SCRIPT="${LOAD_SCRIPT}"
+ENV_AGENT_NAME_KEY="${ENV_AGENT_NAME_KEY}"
+ENV_INSTANCE_ID_KEY="${ENV_INSTANCE_ID_KEY}"
+
+echo "[startup] Executing TeamCity agent bootstrap" >&2
+if [ ! -d "${AGENT_PATH}" ] || [ ! -f "${PROP_FILE}" ]; then
+  mkdir -p "${AGENT_PATH}" && cd "${AGENT_PATH}" || exit 1
+  echo "[startup] Downloading TeamCity agent package" >&2
+  curl -fsSL "${SERVER_URL}/update/buildAgentFull.zip" -o buildAgentFull.zip
+  unzip -q buildAgentFull.zip || { echo '[startup] unzip failed' >&2; exit 1; }
+  rm -f buildAgentFull.zip
+fi
+
+
+mkdir -p "$(dirname "$PROP_FILE")"
+touch "$PROP_FILE"
+echo '' >> "$PROP_FILE"
+echo '# --- ANKA injected properties (startup) ---' >> "$PROP_FILE"
+
+{{PROPERTIES_BLOCK}} >> "$PROP_FILE"
+
+# --- Anka Controller VM metadata
+CURRENT_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || ipconfig getifaddr en2 2>/dev/null || echo '')
+echo "[startup] Current IP: $CURRENT_IP"
+if [ -n "$CURRENT_IP" ]; then
+  API_RESPONSE=$(curl -s -m 10 "$CONTROLLER_URL/api/v1/vm" 2>/dev/null || echo '')
+  echo "$API_RESPONSE" > /tmp/anka_api_response.json || true
+  if [ -n "$API_RESPONSE" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      VM_INFO=$(echo "$API_RESPONSE" | jq -r --arg ip "$CURRENT_IP" '.body[] | select(.vm.vminfo.ip == $ip) | [.vm.vminfo.name, .instance_id] | @tsv' 2>/dev/null || echo '')
+      if [ -n "$VM_INFO" ]; then
+        VM_NAME=$(echo "$VM_INFO" | cut -f1)
+        VM_ID=$(echo "$VM_INFO"   | cut -f2)
+        echo "[startup] Resolved VM_NAME='$VM_NAME' VM_ID='$VM_ID'"
+        echo "$ENV_AGENT_NAME_KEY=$VM_NAME" >> "$PROP_FILE"
+        echo "$ENV_INSTANCE_ID_KEY=$VM_ID" >> "$PROP_FILE"
+      else
+        echo "[startup] No VM match for IP $CURRENT_IP"
+      fi
+    else
+      echo "[startup] jq not found; skipping VM metadata extraction"
+    fi
+  else
+    echo "[startup] Empty controller response"
+  fi
+fi
+
+echo "[startup] Properties appended" >&2
+if [ -x "${LOAD_SCRIPT}" ]; then
+  echo "[startup] Starting agent" >&2
+  "${LOAD_SCRIPT}" start || echo '[startup] Agent start script exited non-zero' >&2
+else
+  echo "[startup] Launch script not found: ${LOAD_SCRIPT}" >&2
+fi
+echo "[startup] Done" >&2
